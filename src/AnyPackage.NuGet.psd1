@@ -17,7 +17,7 @@
             Providers = 'NuGet'
         }
         PSData = @{
-            Tags = @('AnyPackage', 'Provider', 'NuGet', 'Windows')
+            Tags = @('AnyPackage', 'Provider', 'NuGet', 'Windows', 'MacOS', 'Linux')
             LicenseUri = 'https://github.com/anypackage/nuget/blob/main/LICENSE'
             ProjectUri = 'https://github.com/anypackage/nuget'
         }
