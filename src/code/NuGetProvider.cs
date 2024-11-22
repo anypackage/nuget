@@ -7,13 +7,14 @@ using System.Text;
 
 using NuGet.Common;
 using NuGet.Configuration;
+using NuGet.Packaging;
 using NuGet.Protocol;
 using NuGet.Protocol.Core.Types;
 
 namespace AnyPackage.Provider.NuGet;
 
 [PackageProvider("NuGet")]
-public class NuGetProvider : PackageProvider, IFindPackage, IGetSource
+public class NuGetProvider : PackageProvider, IFindPackage, IGetPackage, IGetSource
 {
     protected override bool IsSource(string source)
     {
@@ -66,6 +67,38 @@ public class NuGetProvider : PackageProvider, IFindPackage, IGetSource
         }
     }
 
+    public void GetPackage(PackageRequest request)
+    {
+        var settings = Settings.LoadDefaultSettings(root: null);
+        var packagesPath = SettingsUtility.GetGlobalPackagesFolder(settings);
+
+        if (!Directory.Exists(packagesPath))
+        {
+            return;
+        }
+
+        string name;
+        if (WildcardPattern.ContainsWildcardCharacters(request.Name))
+        {
+            name = "*";
+        }
+        else
+        {
+            name = request.Name.ToLower();
+        }
+
+        var packagesDirectory = new DirectoryInfo(packagesPath);
+        foreach (var file in packagesDirectory.EnumerateFiles($"{name}.nuspec", SearchOption.AllDirectories))
+        {
+            var package = FindPackageByNuSpec(file.FullName, request);
+
+            if (request.IsMatch(package.Name, package.Version!))
+            {
+                request.WritePackage(package);
+            }
+        }
+    }
+
     public void GetSource(SourceRequest request)
     {
         foreach (var source in GetEnabledSources())
@@ -76,6 +109,19 @@ public class NuGetProvider : PackageProvider, IFindPackage, IGetSource
                 request.WriteSource(sourceInfo);
             }
         }
+    }
+
+    private static PackageInfo FindPackageByNuSpec(string path, PackageRequest request)
+    {
+        var reader = new NuspecReader(path);
+        var source = new PackageSourceInfo(path, path, request.ProviderInfo!);
+        var package = new PackageInfo(reader.GetId(),
+                                      reader.GetVersion().ToString(),
+                                      source,
+                                      reader.GetDescription(),
+                                      request.ProviderInfo!);
+
+        return package;
     }
 
     private static string GetQuery(PackageRequest request)
