@@ -3,6 +3,7 @@
     "anypackage",
     "netstandard",
     "Nieto",
+    "packageid",
     "Runspace"
   ]
 }

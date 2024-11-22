@@ -2,19 +2,73 @@
 // You may use, distribute and modify this code under the
 // terms of the MIT license.
 
+using System.Management.Automation;
+using System.Text;
+
+using NuGet.Common;
 using NuGet.Configuration;
+using NuGet.Protocol;
+using NuGet.Protocol.Core.Types;
 
 namespace AnyPackage.Provider.NuGet;
 
 [PackageProvider("NuGet")]
-public class NuGetProvider : PackageProvider, IGetSource
+public class NuGetProvider : PackageProvider, IFindPackage, IGetSource
 {
+    protected override bool IsSource(string source)
+    {
+        return GetEnabledSources().ToArray().Length > 0;
+    }
+
+    public void FindPackage(PackageRequest request)
+    {
+        var sources = GetEnabledSources(request.Source);
+        var query = GetQuery(request);
+        var filter = new SearchFilter(request.Prerelease);
+
+        foreach (var source in sources)
+        {
+            var repo = GetSourceRepository(source);
+            var sourceInfo = new PackageSourceInfo(source.Name, source.Source, ProviderInfo);
+
+            foreach (var result in GetSearchResults(query, filter, repo, request))
+            {
+                if (request.IsMatch(result.Identity.Id))
+                {
+                    IEnumerable<VersionInfo> versions;
+                    if (request.Version is null)
+                    {
+                        versions = new VersionInfo[] { new(result.Identity.Version) };
+                    }
+                    else
+                    {
+                        versions = result.GetVersionsAsync()
+                                         .ConfigureAwait(false)
+                                         .GetAwaiter()
+                                         .GetResult();
+                    }
+
+                    foreach (var version in versions)
+                    {
+                        if (request.IsMatch((PackageVersion)version.Version.ToString()))
+                        {
+                            var package = new PackageInfo(result.Identity.Id,
+                                                          version.Version.ToString(),
+                                                          sourceInfo,
+                                                          result.Description,
+                                                          ProviderInfo);
+
+                            request.WritePackage(package);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     public void GetSource(SourceRequest request)
     {
-        var settings = Settings.LoadDefaultSettings(root: null);
-        var enabledSources = SettingsUtility.GetEnabledSources(settings);
-
-        foreach (var source in enabledSources)
+        foreach (var source in GetEnabledSources())
         {
             if (request.IsMatch(source.Name))
             {
@@ -22,5 +76,76 @@ public class NuGetProvider : PackageProvider, IGetSource
                 request.WriteSource(sourceInfo);
             }
         }
+    }
+
+    private static string GetQuery(PackageRequest request)
+    {
+        var builder = new StringBuilder();
+
+        if (WildcardPattern.ContainsWildcardCharacters(request.Name))
+        {
+            builder.Append($"id:");
+        }
+        else
+        {
+            builder.Append($"packageid:");
+        }
+
+        builder.Append(request.Name.ToLower());
+
+        return builder.ToString();
+    }
+
+    private static SourceRepository GetSourceRepository(PackageSource source)
+    {
+        if (source.ProtocolVersion == 2)
+        {
+            return Repository.Factory.GetCoreV2(source);
+        }
+        else
+        {
+            return Repository.Factory.GetCoreV3(source);
+        }
+    }
+
+    private static IEnumerable<IPackageSearchMetadata> GetSearchResults(string query, SearchFilter filter, SourceRepository repo, PackageRequest request)
+    {
+        var resource = repo.GetResource<PackageSearchResource>();
+        var allResults = new List<IPackageSearchMetadata>();
+        var skip = 0;
+        var take = 1000;
+
+        while (true)
+        {
+            var task = resource.SearchAsync(query, filter, skip, take, NullLogger.Instance, CancellationToken.None);
+            var results = task.ConfigureAwait(false)
+                              .GetAwaiter()
+                              .GetResult()
+                              .ToList();
+
+            allResults.AddRange(results);
+
+            if (results.Count < take)
+            {
+                break;
+            }
+
+            skip += 1000;
+        }
+
+        return allResults;
+    }
+
+    private static IEnumerable<PackageSource> GetEnabledSources(string? name = null)
+    {
+        var settings = Settings.LoadDefaultSettings(root: null);
+        var enabledSources = SettingsUtility.GetEnabledSources(settings);
+
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            enabledSources = enabledSources.Where(x => x.Name == name);
+        }
+
+        return enabledSources;
     }
 }
