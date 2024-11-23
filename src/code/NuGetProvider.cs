@@ -138,11 +138,8 @@ public class NuGetProvider : PackageProvider, IFindPackage, IGetPackage, IGetSou
 
     private PackageInfo FindPackageByNuPkg(string path)
     {
-        var reader = new PackageArchiveReader(path).GetNuspecReaderAsync(CancellationToken.None)
-                                                   .ConfigureAwait(false)
-                                                   .GetAwaiter()
-                                                   .GetResult();
-        return GetPackageInfo(path, reader);
+        using var archiveReader = new PackageArchiveReader(path);
+        return GetPackageInfo(path, archiveReader.NuspecReader);
     }
 
     private PackageInfo GetPackageInfo(string path, NuspecReader reader)
