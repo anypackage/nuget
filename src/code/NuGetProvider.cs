@@ -13,7 +13,7 @@ using NuGet.Protocol.Core.Types;
 
 namespace AnyPackage.Provider.NuGet;
 
-[PackageProvider("NuGet")]
+[PackageProvider("NuGet", FileExtensions = [".nupkg", ".nuspec"])]
 public class NuGetProvider : PackageProvider, IFindPackage, IGetPackage, IGetSource
 {
     protected override bool IsSource(string source)
@@ -22,6 +22,27 @@ public class NuGetProvider : PackageProvider, IFindPackage, IGetPackage, IGetSou
     }
 
     public void FindPackage(PackageRequest request)
+    {
+        if (request.ParameterSetName == "Name")
+        {
+            foreach (var package in FindPackageByName(request))
+            {
+                request.WritePackage(package);
+            }
+        }
+        else if (Path.GetExtension(request.Path) == ".nupkg")
+        {
+            var package = FindPackageByNuPkg(request.Path);
+            request.WritePackage(package);
+        }
+        else if (Path.GetExtension(request.Path) == ".nuspec")
+        {
+            var package = FindPackageByNuSpec(request.Path);
+            request.WritePackage(package);
+        }
+    }
+
+    private IEnumerable<PackageInfo> FindPackageByName(PackageRequest request)
     {
         var sources = GetEnabledSources(request.Source);
         var query = GetQuery(request);
@@ -53,13 +74,11 @@ public class NuGetProvider : PackageProvider, IFindPackage, IGetPackage, IGetSou
                     {
                         if (request.IsMatch((PackageVersion)version.Version.ToString()))
                         {
-                            var package = new PackageInfo(result.Identity.Id,
+                            yield return new PackageInfo(result.Identity.Id,
                                                           version.Version.ToString(),
                                                           sourceInfo,
                                                           result.Description,
                                                           ProviderInfo);
-
-                            request.WritePackage(package);
                         }
                     }
                 }
@@ -90,7 +109,7 @@ public class NuGetProvider : PackageProvider, IFindPackage, IGetPackage, IGetSou
         var packagesDirectory = new DirectoryInfo(packagesPath);
         foreach (var file in packagesDirectory.EnumerateFiles($"{name}.nuspec", SearchOption.AllDirectories))
         {
-            var package = FindPackageByNuSpec(file.FullName, request);
+            var package = FindPackageByNuSpec(file.FullName);
 
             if (request.IsMatch(package.Name, package.Version!))
             {
@@ -111,16 +130,29 @@ public class NuGetProvider : PackageProvider, IFindPackage, IGetPackage, IGetSou
         }
     }
 
-    private static PackageInfo FindPackageByNuSpec(string path, PackageRequest request)
+    private PackageInfo FindPackageByNuSpec(string path)
     {
         var reader = new NuspecReader(path);
-        var source = new PackageSourceInfo(path, path, request.ProviderInfo!);
+        return GetPackageInfo(path, reader);
+    }
+
+    private PackageInfo FindPackageByNuPkg(string path)
+    {
+        var reader = new PackageArchiveReader(path).GetNuspecReaderAsync(CancellationToken.None)
+                                                   .ConfigureAwait(false)
+                                                   .GetAwaiter()
+                                                   .GetResult();
+        return GetPackageInfo(path, reader);
+    }
+
+    private PackageInfo GetPackageInfo(string path, NuspecReader reader)
+    {
+        var source = new PackageSourceInfo(path, path, ProviderInfo);
         var package = new PackageInfo(reader.GetId(),
                                       reader.GetVersion().ToString(),
                                       source,
                                       reader.GetDescription(),
-                                      request.ProviderInfo!);
-
+                                      ProviderInfo);
         return package;
     }
 
