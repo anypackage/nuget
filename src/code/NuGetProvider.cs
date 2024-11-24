@@ -75,10 +75,10 @@ public class NuGetProvider : PackageProvider, IFindPackage, IGetPackage, IGetSou
                         if (request.IsMatch((PackageVersion)version.Version.ToString()))
                         {
                             yield return new PackageInfo(result.Identity.Id,
-                                                          version.Version.ToString(),
-                                                          sourceInfo,
-                                                          result.Description,
-                                                          ProviderInfo);
+                                                         version.Version.ToString(),
+                                                         sourceInfo,
+                                                         result.Description,
+                                                         ProviderInfo);
                         }
                     }
                 }
