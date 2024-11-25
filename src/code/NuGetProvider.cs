@@ -42,50 +42,6 @@ public class NuGetProvider : PackageProvider, IFindPackage, IGetPackage, IGetSou
         }
     }
 
-    private IEnumerable<PackageInfo> FindPackageByName(PackageRequest request)
-    {
-        var sources = GetEnabledSources(request.Source);
-        var query = GetQuery(request);
-        var filter = new SearchFilter(request.Prerelease);
-
-        foreach (var source in sources)
-        {
-            var repo = GetSourceRepository(source);
-            var sourceInfo = new PackageSourceInfo(source.Name, source.Source, ProviderInfo);
-
-            foreach (var result in GetSearchResults(query, filter, repo, request))
-            {
-                if (request.IsMatch(result.Identity.Id))
-                {
-                    IEnumerable<VersionInfo> versions;
-                    if (request.Version is null)
-                    {
-                        versions = new VersionInfo[] { new(result.Identity.Version) };
-                    }
-                    else
-                    {
-                        versions = result.GetVersionsAsync()
-                                         .ConfigureAwait(false)
-                                         .GetAwaiter()
-                                         .GetResult();
-                    }
-
-                    foreach (var version in versions)
-                    {
-                        if (request.IsMatch((PackageVersion)version.Version.ToString()))
-                        {
-                            yield return new PackageInfo(result.Identity.Id,
-                                                         version.Version.ToString(),
-                                                         sourceInfo,
-                                                         result.Description,
-                                                         ProviderInfo);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     public void GetPackage(PackageRequest request)
     {
         var settings = Settings.LoadDefaultSettings(root: null);
@@ -126,6 +82,50 @@ public class NuGetProvider : PackageProvider, IFindPackage, IGetPackage, IGetSou
             {
                 var sourceInfo = new PackageSourceInfo(source.Name, source.Source, ProviderInfo);
                 request.WriteSource(sourceInfo);
+            }
+        }
+    }
+
+    private IEnumerable<PackageInfo> FindPackageByName(PackageRequest request)
+    {
+        var sources = GetEnabledSources(request.Source);
+        var query = GetQuery(request);
+        var filter = new SearchFilter(request.Prerelease);
+
+        foreach (var source in sources)
+        {
+            var repo = GetSourceRepository(source);
+            var sourceInfo = new PackageSourceInfo(source.Name, source.Source, ProviderInfo);
+
+            foreach (var result in GetSearchResults(query, filter, repo, request))
+            {
+                if (request.IsMatch(result.Identity.Id))
+                {
+                    IEnumerable<VersionInfo> versions;
+                    if (request.Version is null)
+                    {
+                        versions = new VersionInfo[] { new(result.Identity.Version) };
+                    }
+                    else
+                    {
+                        versions = result.GetVersionsAsync()
+                                         .ConfigureAwait(false)
+                                         .GetAwaiter()
+                                         .GetResult();
+                    }
+
+                    foreach (var version in versions)
+                    {
+                        if (request.IsMatch((PackageVersion)version.Version.ToString()))
+                        {
+                            yield return new PackageInfo(result.Identity.Id,
+                                                         version.Version.ToString(),
+                                                         sourceInfo,
+                                                         result.Description,
+                                                         ProviderInfo);
+                        }
+                    }
+                }
             }
         }
     }
