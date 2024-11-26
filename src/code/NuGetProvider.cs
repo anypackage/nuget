@@ -14,11 +14,21 @@ using NuGet.Protocol.Core.Types;
 namespace AnyPackage.Provider.NuGet;
 
 [PackageProvider("NuGet", FileExtensions = [".nupkg", ".nuspec"])]
-public class NuGetProvider : PackageProvider, IFindPackage, IGetPackage, IGetSource
+public class NuGetProvider : PackageProvider, IFindPackage, IGetPackage, IGetSource, ISetSource
 {
     protected override bool IsSource(string source)
     {
         return GetEnabledSources().ToArray().Length > 0;
+    }
+
+    protected override object? GetDynamicParameters(string commandName)
+    {
+        return commandName switch
+        {
+            "Register-PackageSource" => new SetSourceDynamicParameters(),
+            "Set-PackageSource" => new SetSourceDynamicParameters(),
+            _ => null,
+        };
     }
 
     public void FindPackage(PackageRequest request)
@@ -86,6 +96,83 @@ public class NuGetProvider : PackageProvider, IFindPackage, IGetPackage, IGetSou
         }
     }
 
+    public void RegisterSource(SourceRequest request)
+    {
+        var sourceProvider = GetPackageSourceProvider();
+        var source = sourceProvider.GetPackageSourceByName(request.Name);
+        var force = request.Force ?? false;
+
+        if (source is not null && !force)
+        {
+            return;
+        }
+
+        source = new PackageSource(request.Location!, request.Name);
+
+        var uri = new Uri(request.Location);
+
+        if (uri.Scheme == "http" || uri.Scheme == "https")
+        {
+            var dynamicParameters = request.DynamicParameters as SetSourceDynamicParameters;
+
+            if (dynamicParameters is not null && dynamicParameters.ProtocolVersion != 0)
+            {
+                source.ProtocolVersion = dynamicParameters.ProtocolVersion;
+            }
+            else
+            {
+                throw new InvalidOperationException("Location scheme of 'http' or 'https' requires ProtocolVersion parameter.");
+            }
+        }
+
+        sourceProvider.AddPackageSource(source);
+        var sourceInfo = new PackageSourceInfo(source.Name, source.Source, ProviderInfo);
+        request.WriteSource(sourceInfo);
+    }
+
+    public void SetSource(SourceRequest request)
+    {
+        var sourceProvider = GetPackageSourceProvider();
+        var source = sourceProvider.GetPackageSourceByName(request.Name);
+
+        if (source is not null && request.Location is not null)
+        {
+            var uri = new Uri(request.Location);
+
+            if (uri.Scheme == "http" || uri.Scheme == "https")
+            {
+                var dynamicParameters = request.DynamicParameters as SetSourceDynamicParameters;
+
+                if (dynamicParameters is not null && dynamicParameters.ProtocolVersion != 0)
+                {
+                    source.ProtocolVersion = dynamicParameters.ProtocolVersion;
+                }
+                else
+                {
+                    throw new InvalidOperationException("Location scheme of 'http' or 'https' requires ProtocolVersion parameter.");
+                }
+            }
+
+            source.Source = request.Location;
+            sourceProvider.UpdatePackageSource(source, updateCredentials: false, updateEnabled: false);
+            var sourceInfo = new PackageSourceInfo(source.Name, source.Source, ProviderInfo);
+            request.WriteSource(sourceInfo);
+        }
+    }
+
+    public void UnregisterSource(SourceRequest request)
+    {
+        var sourceProvider = GetPackageSourceProvider();
+        var source = sourceProvider.GetPackageSourceByName(request.Name);
+
+        if (source is not null)
+        {
+            sourceProvider.RemovePackageSource(request.Name);
+            var sourceInfo = new PackageSourceInfo(source.Name, source.Source, ProviderInfo);
+            request.WriteSource(sourceInfo);
+        }
+    }
+
     private IEnumerable<PackageInfo> FindPackageByName(PackageRequest request)
     {
         var sources = GetEnabledSources(request.Source);
@@ -140,6 +227,13 @@ public class NuGetProvider : PackageProvider, IFindPackage, IGetPackage, IGetSou
     {
         using var archiveReader = new PackageArchiveReader(path);
         return GetPackageInfo(path, archiveReader.NuspecReader);
+    }
+
+    private static PackageSourceProvider GetPackageSourceProvider()
+    {
+        var settings = Settings.LoadDefaultSettings(root: null);
+        var sourceProvider = new PackageSourceProvider(settings);
+        return sourceProvider;
     }
 
     private PackageInfo GetPackageInfo(string path, NuspecReader reader)
