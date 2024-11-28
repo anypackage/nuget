@@ -7,14 +7,19 @@ using System.Text;
 
 using NuGet.Common;
 using NuGet.Configuration;
+using NuGet.Frameworks;
 using NuGet.Packaging;
+using NuGet.Packaging.Core;
+using NuGet.Packaging.Signing;
 using NuGet.Protocol;
 using NuGet.Protocol.Core.Types;
+using NuGet.Resolver;
+using NuGet.Versioning;
 
 namespace AnyPackage.Provider.NuGet;
 
 [PackageProvider("NuGet", FileExtensions = [".nupkg", ".nuspec"])]
-public class NuGetProvider : PackageProvider, IFindPackage, IGetPackage, IGetSource, ISetSource
+public class NuGetProvider : PackageProvider, IFindPackage, IGetPackage, IInstallPackage, ISavePackage, IGetSource, ISetSource
 {
     protected override bool IsSource(string source)
     {
@@ -25,6 +30,8 @@ public class NuGetProvider : PackageProvider, IFindPackage, IGetPackage, IGetSou
     {
         return commandName switch
         {
+            "Install-Package" => new InstallPackageDynamicParameters(),
+            "Save-Package" => new InstallPackageDynamicParameters(),
             "Register-PackageSource" => new SetSourceDynamicParameters(),
             "Set-PackageSource" => new SetSourceDynamicParameters(),
             _ => null,
@@ -82,6 +89,16 @@ public class NuGetProvider : PackageProvider, IFindPackage, IGetPackage, IGetSou
                 request.WritePackage(package);
             }
         }
+    }
+
+    public void InstallPackage(PackageRequest request)
+    {
+        InstallPackage(request, path: null);
+    }
+
+    public void SavePackage(PackageRequest request)
+    {
+        InstallPackage(request, request.Path);
     }
 
     public void GetSource(SourceRequest request)
@@ -227,6 +244,149 @@ public class NuGetProvider : PackageProvider, IFindPackage, IGetPackage, IGetSou
     {
         using var archiveReader = new PackageArchiveReader(path);
         return GetPackageInfo(path, archiveReader.NuspecReader);
+    }
+
+    private void InstallPackage(PackageRequest request, string? path)
+    {
+        var framework = NuGetFramework.AnyFramework;
+        var dependencyBehavior = DependencyBehavior.Lowest;
+        if (request.DynamicParameters is InstallPackageDynamicParameters dynamicParameters)
+        {
+            framework = NuGetFramework.Parse(dynamicParameters.Framework);
+            dependencyBehavior = dynamicParameters.DependencyBehavior;
+        }
+
+        var package = FindPackageByName(request).FirstOrDefault();
+
+        if (package is null || package.Version is null)
+        {
+            return;
+        }
+
+        var version = new NuGetVersion(package.Version.ToString());
+        var identity = new PackageIdentity(package.Name, version);
+        var sources = GetEnabledSources(request.Source);
+        var availablePackages = new HashSet<SourcePackageDependencyInfo>(PackageIdentityComparer.Default);
+        using var cache = new SourceCacheContext();
+        var task = GetPackageDependenciesAsync(identity, framework, cache, sources, availablePackages, request);
+        task.Wait();
+
+        var resolverContext = new PackageResolverContext(dependencyBehavior,
+                                                         new[] { request.Name.ToLower() },
+                                                         Enumerable.Empty<string>(),
+                                                         Enumerable.Empty<PackageReference>(),
+                                                         Enumerable.Empty<PackageIdentity>(),
+                                                         availablePackages,
+                                                         sources,
+                                                         NullLogger.Instance);
+
+        var resolver = new PackageResolver();
+        var packagesToInstall = resolver.Resolve(resolverContext, CancellationToken.None)
+                                        .Select(p => availablePackages.Single(x => PackageIdentityComparer.Default.Equals(x, p)));
+
+        var downloadedPackages = DownloadPackageAsync(packagesToInstall, cache, path: path).GetAwaiter().GetResult();
+
+        foreach (var downloadedPackage in downloadedPackages)
+        {
+            if (request.IsMatch(downloadedPackage.Name, downloadedPackage.Version!))
+            {
+                request.WritePackage(downloadedPackage);
+            }
+            else
+            {
+                request.WriteVerbose($"Installed dependency '{downloadedPackage.Name}' with version '{downloadedPackage.Version}'.");
+            }
+        }
+    }
+
+    private async Task<IEnumerable<PackageInfo>> DownloadPackageAsync(IEnumerable<SourcePackageDependencyInfo> packagesToInstall, SourceCacheContext cache, string? path)
+    {
+        var settings = Settings.LoadDefaultSettings(root: null);
+        var globalPath = SettingsUtility.GetGlobalPackagesFolder(settings);
+        var packageExtractionContext = new PackageExtractionContext(PackageSaveMode.Defaultv3,
+                                                                    XmlDocFileSaveMode.None,
+                                                                    ClientPolicyContext.GetClientPolicy(settings, NullLogger.Instance),
+                                                                    NullLogger.Instance);
+
+        // GetTempPath is not actually used just required to create PackagePathResolver
+        var rootPath = path ?? Path.GetTempPath();
+        var packagePathResolver = new PackagePathResolver(Path.GetFullPath(rootPath));
+
+        var downloadedPackages = new List<PackageInfo>();
+        foreach (var packageToInstall in packagesToInstall)
+        {
+            if (path is not null)
+            {
+                var installedPath = packagePathResolver.GetInstalledPath(packageToInstall);
+
+                if (installedPath is not null)
+                {
+                    continue;
+                }
+            }
+            else
+            {
+                var installPath = Path.Combine(globalPath, packageToInstall.Id, packageToInstall.Version.ToString());
+
+                if (Directory.Exists(installPath))
+                {
+                    continue;
+                }
+            }
+
+            var downloadResource = await packageToInstall.Source.GetResourceAsync<DownloadResource>();
+            var downloadResult = await downloadResource.GetDownloadResourceResultAsync(packageToInstall,
+                                                                                       new PackageDownloadContext(cache),
+                                                                                       SettingsUtility.GetGlobalPackagesFolder(settings),
+                                                                                       NullLogger.Instance,
+                                                                                       CancellationToken.None);
+
+            if (path is not null)
+            {
+                await PackageExtractor.ExtractPackageAsync(downloadResult.PackageSource,
+                                                       downloadResult.PackageStream,
+                                                       packagePathResolver,
+                                                       packageExtractionContext,
+                                                       CancellationToken.None);
+            }
+
+            var sourceInfo = new PackageSourceInfo(packageToInstall.Source.PackageSource.Name, packageToInstall.Source.PackageSource.Source, ProviderInfo);
+            var packageInfo = new PackageInfo(packageToInstall.Id, packageToInstall.Version.ToString(), sourceInfo, ProviderInfo);
+            downloadedPackages.Add(packageInfo);
+        }
+
+        return downloadedPackages;
+    }
+
+    private static async Task GetPackageDependenciesAsync(PackageIdentity identity,
+                                                          NuGetFramework framework,
+                                                          SourceCacheContext cache,
+                                                          IEnumerable<PackageSource> sources,
+                                                          ISet<SourcePackageDependencyInfo> availablePackages,
+                                                          PackageRequest request)
+    {
+        if (availablePackages.Contains(identity)) { return; }
+
+        foreach (var source in sources)
+        {
+            var repo = GetSourceRepository(source);
+            var depResource = repo.GetResource<DependencyInfoResource>();
+            var depInfo = await depResource.ResolvePackage(identity,
+                                                     framework,
+                                                     cache,
+                                                     NullLogger.Instance,
+                                                     CancellationToken.None);
+
+            if (depInfo is null) { continue; }
+
+            availablePackages.Add(depInfo);
+
+            foreach (var dependency in depInfo.Dependencies)
+            {
+                // MinVersion could be exclusive
+                await GetPackageDependenciesAsync(new PackageIdentity(dependency.Id, dependency.VersionRange.MinVersion), framework, cache, sources, availablePackages, request);
+            }
+        }
     }
 
     private static PackageSourceProvider GetPackageSourceProvider()
