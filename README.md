@@ -49,6 +49,18 @@ Installs packages to the NuGet global packages directory.
 Install-Package -Name System.Management.Automation
 ```
 
+### Install packages with specified framework
+
+```powershell
+Install-Package -Name Avalonia -Provider NuGet -Framework netstandard2.0
+```
+
+### Install packages with dependency behavior
+
+```powershell
+Install-Package -Name Avalonia -Provider NuGet -DependencyBehavior Highest
+```
+
 ### Save packages
 
 Saves packages to a directory.
