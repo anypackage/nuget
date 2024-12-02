@@ -32,3 +32,19 @@ Import-Module AnyPackage.NuGet
 ```powershell
 Find-Package -Name System.Management.Automation
 ```
+
+### Install packages
+
+Installs packages to the NuGet global packages directory.
+
+```powershell
+Install-Package -Name System.Management.Automation
+```
+
+### Save packages
+
+Saves packages to a directory.
+
+```powershell
+Save-Package -Name System.Management.Automation -Path C:\Temp
+```
