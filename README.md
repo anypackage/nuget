@@ -68,3 +68,35 @@ Saves packages to a directory.
 ```powershell
 Save-Package -Name System.Management.Automation -Path C:\Temp
 ```
+
+### Get registered package sources
+
+```powershell
+Get-PackageSource
+```
+
+### Register package source
+
+```powershell
+
+$params = @{
+    Name            = 'nuget.org'
+    Location        = 'https://api.nuget.org/v3/index.json'
+    Provider        = 'NuGet'
+    ProtocolVersion = 3
+}
+
+Register-PackageSource @params
+```
+
+### Set package source
+
+```powershell
+Set-PackageSource -Name nuget.org -Location url
+```
+
+### Unregister package source
+
+```powershell
+Unregister-PackageSource -Name nuget.org
+```
