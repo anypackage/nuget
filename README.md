@@ -33,6 +33,14 @@ Import-Module AnyPackage.NuGet
 Find-Package -Name System.Management.Automation
 ```
 
+### Get installed packages
+
+Gets installed packages from the NuGet global packages directory.
+
+```powershell
+Find-Package -Name System.Management.Automation
+```
+
 ### Install packages
 
 Installs packages to the NuGet global packages directory.
