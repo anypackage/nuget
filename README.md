@@ -32,3 +32,39 @@ Import-Module AnyPackage.NuGet
 ```powershell
 Find-Package -Name System.Management.Automation
 ```
+
+### Get installed packages
+
+Gets installed packages from the NuGet global packages directory.
+
+```powershell
+Get-Package
+```
+
+### Install packages
+
+Installs packages to the NuGet global packages directory.
+
+```powershell
+Install-Package -Name System.Management.Automation
+```
+
+### Install packages with specified framework
+
+```powershell
+Install-Package -Name Avalonia -Provider NuGet -Framework netstandard2.0
+```
+
+### Install packages with dependency behavior
+
+```powershell
+Install-Package -Name Avalonia -Provider NuGet -DependencyBehavior Highest
+```
+
+### Save packages
+
+Saves packages to a directory.
+
+```powershell
+Save-Package -Name System.Management.Automation -Path C:\Temp
+```
