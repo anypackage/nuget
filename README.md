@@ -38,7 +38,7 @@ Find-Package -Name System.Management.Automation
 Gets installed packages from the NuGet global packages directory.
 
 ```powershell
-Find-Package -Name System.Management.Automation
+Get-Package
 ```
 
 ### Install packages
